@@ -264,18 +264,64 @@ class RuleGame:
     # ---- core loop ----
 
     def run_iteration(self) -> bool:
-        output = []
         try:
-            for num in range(self.range_start, self.range_end + 1):
-                rv = RuleValue(number=num)
-                for rule in self.active_rules:
-                    rv = rule.fn(rv)
-                output.append(rv.render())
-
             count = self.range_end - self.range_start + 1
             print(f"\n  Range {self.range_start}–{self.range_end} ({count} numbers) | "
                   f"Rules active: {len(self.active_rules)}")
-            print(f"  Output: {output}")
+
+            # Build a map of number -> applicable rule (latest rule wins on conflict)
+            rule_map: dict[int, RuleEntry] = {}
+            banned_numbers: set[int] = set()
+
+            for rule in self.active_rules:
+                if rule.kind == 'ban':
+                    banned_numbers.add(rule.params['num'])
+                else:
+                    # For non-ban rules, apply to all numbers they target
+                    if rule.kind == 'swap':
+                        # Swap applies to both numbers in the swap
+                        rule_map[rule.params['a']] = rule
+                        rule_map[rule.params['b']] = rule
+                    elif rule.kind == 'replace':
+                        rule_map[rule.params['num']] = rule
+                    else:
+                        # For divisible, odd, even: apply to all numbers in range
+                        for n in range(self.range_start, self.range_end + 1):
+                            if rule.kind == 'divisible':
+                                if n % rule.params['divisor'] == 0:
+                                    rule_map[n] = rule
+                            elif rule.kind == 'odd':
+                                if n % 2 != 0:
+                                    rule_map[n] = rule
+                            elif rule.kind == 'even':
+                                if n % 2 == 0:
+                                    rule_map[n] = rule
+
+            for num in range(self.range_start, self.range_end + 1):
+                # Compute expected result based on latest applicable rule
+                rv = RuleValue(number=num)
+
+                # If there's a rule for this number, apply only that rule
+                if num in rule_map:
+                    rv = rule_map[num].fn(rv)
+
+                expected = rv.render()
+
+                # If the number itself is banned, replace expected with next non-banned number
+                if num in banned_numbers:
+                    next_num = num + 1
+                    while next_num in banned_numbers:
+                        next_num += 1
+                    expected = str(next_num)
+
+                # Ask the player for their move
+                player_input = input(f"  {num}: Your move? ").strip()
+
+                if player_input != expected:
+                    print(f"\n  ✗ Incorrect — expected: {expected!r}. Game Over.")
+                    return False
+
+            print("\n  ✓ All moves correct for this iteration.")
             return True
 
         except Exception as e:
